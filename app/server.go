@@ -18,7 +18,6 @@ const (
 	OKHeader = "HTTP/1.1 200 OK\r\n\r\n"
 )
 
-
 type Config struct {
 	Listen string `yaml:"listen"`
 	//Db      DBConfig `yaml:"db"`
@@ -77,23 +76,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		err := recover()
 		if err != nil {
+			s.log.Fatal("unexpected error was met during server recover")
 			log.Println(err)
 		}
 	}()
 	if r.Method == http.MethodConnect {
 		fmt.Println("https")
-		s.HandleTunneling(w, r)
-		//s.LaunchSecureConnection(w, r)
+		s.HandleHttps(w, r)
 	} else {
-		s.HandleHTTP(w, r)
+		s.HandleHttp(w, r)
 	}
 }
 
-func (s *Server) HandleTunneling(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleHttps(w http.ResponseWriter, r *http.Request) {
 
 	leafCert, err := certificates.GenerateCert(&s.ca, r.Host)
 	if err != nil {
-		//log.Fatalf("Error while generating certificates: %s\n", err.Error())
+		s.log.FatalF("Error while generating certificates: %s\n", err.Error())
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
@@ -115,40 +114,59 @@ func (s *Server) HandleTunneling(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//head := fmt.Sprintf("Method: %s\t Request: %s", r.Proto,  r.URL)
+	//s.log.Infof(head)
+	//requestLogger(r.Response, s.log)
+
 	conn, _, err := hijacker.Hijack()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	//w.WriteHeader(http.StatusOK)
 
-
-	_, err = conn.Write([]byte(OKHeader))
-	if err != nil {
-		log.Printf("Unable to install conn: %v", err)
+	if _, err = conn.Write([]byte(OKHeader)); err != nil {
+		s.log.ErrorF("Unable to install conn: %v", err)
 		_ = conn.Close()
 		return
 	}
 	clientConn := tls.Server(conn, curConfig)
-	//requestLogger()
-	//err = clientConn.Handshake()
-	//if err != nil {
-	//	log.Printf("Unable to handshake: %v", err)
-	//	_ = clientConn.Close()
-	//	_ = conn.Close()
-	//	return
-	//}
-
 	go transfer(serverConn, clientConn)
 	go transfer(clientConn, serverConn)
 }
 func transfer(destination io.WriteCloser, source io.ReadCloser) {
+	if destination == nil || source == nil {
+		return
+	}
 	defer destination.Close()
 	defer source.Close()
 	io.Copy(destination, source)
 }
 
+func (s *Server) HandleHttp(w http.ResponseWriter, req *http.Request) {
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+	requestLogger(resp, s.log)
+	copyHeader(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func copyHeader(dst, src http.Header) {
+	for k, vv := range src {
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
+}
+
 func requestLogger(resp *http.Response, log *logger.Logger) {
+	if resp == nil {
+		return
+	}
 	status := resp.StatusCode
 	head := fmt.Sprintf("Method: %s\t Status: %s\t Request: %s", resp.Proto, resp.Status, resp.Request.RequestURI)
 	if status >= 400 && status < 500 {
@@ -161,25 +179,5 @@ func requestLogger(resp *http.Response, log *logger.Logger) {
 		}
 	} else {
 		log.Error(head)
-	}
-}
-
-func (s *Server) HandleHTTP(w http.ResponseWriter, req *http.Request) {
-	resp, err := http.DefaultTransport.RoundTrip(req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-	defer resp.Body.Close()
-	requestLogger(resp, s.log)
-	copyHeader(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-func copyHeader(dst, src http.Header) {
-	for k, vv := range src {
-		for _, v := range vv {
-			dst.Add(k, v)
-		}
 	}
 }

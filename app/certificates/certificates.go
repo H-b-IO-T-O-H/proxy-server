@@ -10,41 +10,25 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"math/big"
-	"net"
 	"os"
 	"time"
 )
 
 const (
+	keyFile    = "cert/ca.key"
+	certFile   = "cert/ca.crt"
 	caMaxAge   = 5 * 365 * 24 * time.Hour
 	leafMaxAge = 24 * time.Hour
-	caUsage    = x509.KeyUsageDigitalSignature |
-		x509.KeyUsageContentCommitment |
-		x509.KeyUsageKeyEncipherment |
-		x509.KeyUsageDataEncipherment |
-		x509.KeyUsageKeyAgreement |
-		x509.KeyUsageCertSign |
-		x509.KeyUsageCRLSign
-	leafUsage = caUsage
 )
 
-var (
-	localhostname, _ = os.Hostname()
-)
+var localHost, _ = os.Hostname()
 
-const (
-	//keyFile  = "ca-key.pem"
-	//certFile = "ca-cert.crt"
-	keyFile  = "ca.key"
-	certFile = "ca.crt"
-)
-
-// LoadCA loads the ca from "HOME/dir"
 func LoadCA() (cert tls.Certificate, err error) {
 	cert, err = tls.LoadX509KeyPair(certFile, keyFile)
 	if os.IsNotExist(err) {
-		cert, err = genCA()
+		cert, err = saveCA()
 	}
 	if err == nil {
 		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
@@ -52,28 +36,26 @@ func LoadCA() (cert tls.Certificate, err error) {
 	return
 }
 
-func genCA() (cert tls.Certificate, err error) {
-	certPEM, keyPEM, err := GenerateCA(localhostname)
+func saveCA() (cert tls.Certificate, err error) {
+	caCrt, caKey, err := genCa(localHost)
 	if err != nil {
 		return
 	}
-	cert, _ = tls.X509KeyPair(certPEM, keyPEM)
-	err = ioutil.WriteFile(certFile, certPEM, 0644)
+	cert, _ = tls.X509KeyPair(caCrt, caKey)
+	err = ioutil.WriteFile(certFile, caCrt, 0444)
 	if err == nil {
-		err = ioutil.WriteFile(keyFile, keyPEM, 0644)
+		err = ioutil.WriteFile(keyFile, caKey, 0444)
 	}
-	return cert, err
+	return
 }
 
-// GenerateCA generates a CA cert and key pair.
-func GenerateCA(name string) (certPEM, keyPEM []byte, err error) {
+func genCa(name string) (caCrt, caKey []byte, err error) {
 	now := time.Now().UTC()
 	tmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
 		Subject:               pkix.Name{CommonName: name},
 		NotBefore:             now,
 		NotAfter:              now.Add(caMaxAge),
-		KeyUsage:              caUsage,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 		MaxPathLen:            2,
@@ -88,11 +70,11 @@ func GenerateCA(name string) (certPEM, keyPEM []byte, err error) {
 		return
 	}
 	keyDER := x509.MarshalPKCS1PrivateKey(key)
-	certPEM = pem.EncodeToMemory(&pem.Block{
+	caCrt = pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: certDER,
 	})
-	keyPEM = pem.EncodeToMemory(&pem.Block{
+	caKey = pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: keyDER,
 	})
@@ -100,32 +82,22 @@ func GenerateCA(name string) (certPEM, keyPEM []byte, err error) {
 }
 
 //GenerateCert generates a leaf cert from ca.
-func GenerateCert(ca *tls.Certificate, hosts ...string) (*tls.Certificate, error) {
-	now := time.Now().Add(-1 * time.Hour).UTC()
+func GenerateCert(ca *tls.Certificate, host string) (*tls.Certificate, error) {
 	if !ca.Leaf.IsCA {
 		return nil, errors.New("CA cert is not a CA")
 	}
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	now := time.Now().Add(-1 * time.Hour).UTC()
+	serialNumber, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate serial number: %s", err)
+		return nil, fmt.Errorf("failed to generate certificate serial number: %s", err)
 	}
 	template := &x509.Certificate{
 		SerialNumber:          serialNumber,
-		Subject:               pkix.Name{CommonName: hosts[0]},
+		Subject:               pkix.Name{CommonName: host},
 		NotBefore:             now,
 		NotAfter:              now.Add(leafMaxAge),
-		KeyUsage:              leafUsage,
 		BasicConstraintsValid: true,
 		SignatureAlgorithm:    x509.SHA256WithRSA,
-	}
-
-	for _, h := range hosts {
-		if ip := net.ParseIP(h); ip != nil {
-			template.IPAddresses = append(template.IPAddresses, ip)
-		} else {
-			template.DNSNames = append(template.DNSNames, h)
-		}
 	}
 
 	key, err := genKeyPair()
@@ -144,5 +116,5 @@ func GenerateCert(ca *tls.Certificate, hosts ...string) (*tls.Certificate, error
 }
 
 func genKeyPair() (*rsa.PrivateKey, error) {
-	return rsa.GenerateKey(rand.Reader, 2048)
+	return rsa.GenerateKey(rand.Reader, 1024)
 }
