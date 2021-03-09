@@ -1,11 +1,14 @@
 package app
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"github.com/H-b-IO-T-O-H/proxy-server/app/certificates"
 	"github.com/apsdehal/go-logger"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -80,8 +83,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Println(err)
 		}
 	}()
+	//requestLogger(r, s.log)
 	if r.Method == http.MethodConnect {
-		fmt.Println("https")
 		s.HandleHttps(w, r)
 	} else {
 		s.HandleHttp(w, r)
@@ -107,10 +110,17 @@ func (s *Server) HandleHttps(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	serverConn, err := tls.Dial("tcp", r.Host, curConfig)
+	serverConn, errServ := tls.Dial("tcp", r.Host, curConfig)
+	if errServ != nil {
+		s.log.ErrorF("Service unavailable: %v", errServ)
+		http.Error(w, errServ.Error(), http.StatusServiceUnavailable)
+		return
+	}
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		msg := "Hijacking not supported"
+		s.log.ErrorF(msg)
+		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 
@@ -130,16 +140,47 @@ func (s *Server) HandleHttps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clientConn := tls.Server(conn, curConfig)
-	go transfer(serverConn, clientConn)
-	go transfer(clientConn, serverConn)
+
+	go transfer(serverConn, clientConn, true, s.log)
+	go transfer(clientConn, serverConn, false, s.log)
 }
-func transfer(destination io.WriteCloser, source io.ReadCloser) {
-	if destination == nil || source == nil {
+func transfer(dest io.WriteCloser, src io.ReadCloser, save bool, log *logger.Logger) {
+	var err error
+
+	if src == nil || dest == nil {
 		return
 	}
-	defer destination.Close()
-	defer source.Close()
-	io.Copy(destination, source)
+	defer func() {
+		if dest != nil {
+			_ = dest.Close()
+		}
+		if src != nil {
+			_ = src.Close()
+		}
+	}()
+
+	buf := new(bytes.Buffer)
+	multiWriter := io.MultiWriter(dest, buf)
+	_, err = io.Copy(multiWriter, ioutil.NopCloser(src))
+	if err != nil {
+		//log.Println("afsdfsdffsadfasafds")
+		return
+	}
+
+	if save {
+		bufReader := bufio.NewReader(bytes.NewBuffer(buf.Bytes()))
+		req, _ := http.ReadRequest(bufReader)
+		if req != nil {
+			requestLogger(req, log)
+		}
+	}
+	//else {
+	//	bufReader := bufio.NewReader(bytes.NewBuffer(buf.Bytes()))
+	//	resp, _ := http.ReadResponse(bufReader, nil)
+	//	if resp != nil {
+	//		responseLogger(resp, log)
+	//	}
+	//}
 }
 
 func (s *Server) HandleHttp(w http.ResponseWriter, req *http.Request) {
@@ -149,7 +190,7 @@ func (s *Server) HandleHttp(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	requestLogger(resp, s.log)
+	responseLogger(resp, s.log)
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
@@ -163,12 +204,21 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-func requestLogger(resp *http.Response, log *logger.Logger) {
-	if resp == nil {
+func requestLogger(req *http.Request, log *logger.Logger) {
+	if req == nil {
 		return
 	}
+	head := fmt.Sprintf("Method: %s %s\t Request: %s", req.Method, req.Proto, req.RequestURI)
+	log.Infof(head)
+}
+
+func responseLogger(resp *http.Response, log *logger.Logger) {
 	status := resp.StatusCode
-	head := fmt.Sprintf("Method: %s\t Status: %s\t Request: %s", resp.Proto, resp.Status, resp.Request.RequestURI)
+	reqUri := "none"
+	if resp.Request != nil {
+		reqUri = resp.Request.RequestURI
+	}
+	head := fmt.Sprintf("Method: %s\t Status: %s\t Request: %s", resp.Proto, resp.Status, reqUri)
 	if status >= 400 && status < 500 {
 		log.Warning(head)
 	} else if status < 400 {
