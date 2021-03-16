@@ -1,0 +1,1 @@
+psql --host=localhost --dbname=Requests --username=postgres --file=init.sql
