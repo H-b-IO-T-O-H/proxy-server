@@ -31,6 +31,6 @@ length = [1..] - Specify max uri length like length='150'
    |cat /etc/passwd|
    `cat /etc/passwd`
    in server answer try to find "root:"
-
-Example of vulnerability search in [portswigger](https://portswigger.net/web-security/os-command-injection) os command injection tasks:
-![](examples/req_scan.png)
+   
+   Example of vulnerability search in [portswigger](https://portswigger.net/web-security/os-command-injection) os command injection tasks:
+   ![](examples/req_scan.png)
