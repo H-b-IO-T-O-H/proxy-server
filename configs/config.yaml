@@ -1,16 +1,16 @@
 proxy: :8080
 gui: :8000
 
-#db:
-#  host: localhost
-#  port: 5432
-#  user: postgres
-#  password: docker
-#  name: Requests
-
 db:
   host: localhost
   port: 5432
-  user: proxyuser
-  password: proxyuser
+  user: postgres
+  password: docker
   name: Requests
+
+#db:
+#  host: localhost
+#  port: 5432
+#  user: proxyuser
+#  password: proxyuser
+#  name: Requests

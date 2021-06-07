@@ -23,6 +23,14 @@ length = [1..] - Specify max uri length like length='150'
    ![](examples/network_proxy.png)
  - list all saved requests using /requests?limit=int:
    ![](examples/req_list.png)
- - you can get requests list and resend each request using /repeat/id
+ - you can resend each request using /repeat/id
    ![](examples/repeat_req.png)
-   
+ - you can scan post request using /scan/id for
+   command injection – all GET/POST params test with
+   ;cat /etc/passwd;
+   |cat /etc/passwd|
+   `cat /etc/passwd`
+   in server answer try to find "root:"
+
+Example of vulnerability search in [portswigger](https://portswigger.net/web-security/os-command-injection) os command injection tasks:
+![](examples/req_scan.png)
